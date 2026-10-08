@@ -300,6 +300,8 @@ drop policy if exists "Household members create transactions" on public.transact
 drop policy if exists "Household members update transactions" on public.transactions;
 drop policy if exists "Household members delete transactions" on public.transactions;
 drop policy if exists "Household members can view invitations" on public.invitations;
+drop policy if exists "Household owners create invitations" on public.invitations;
+drop policy if exists "Household owners update invitations" on public.invitations;
 
 create policy "Profiles are visible to their owner and admins"
 on public.profiles for select to authenticated
@@ -338,9 +340,23 @@ using ((select public.is_household_member(household_id)) or (select public.is_ad
 create policy "Household members can view invitations"
 on public.invitations for select to authenticated
 using ((select public.is_household_member(household_id)) or (select public.is_admin()));
+create policy "Household owners create invitations"
+on public.invitations for insert to authenticated
+with check (
+  (select public.is_household_owner(household_id))
+  and invited_by = (select auth.uid())
+);
+create policy "Household owners update invitations"
+on public.invitations for update to authenticated
+using ((select public.is_household_owner(household_id)))
+with check (
+  (select public.is_household_owner(household_id))
+  and invited_by = (select auth.uid())
+);
 
 grant usage on schema public to authenticated;
 grant select on public.profiles, public.households, public.household_members, public.invitations to authenticated;
+grant insert, update on public.invitations to authenticated;
 grant select, insert, update, delete on public.categories, public.transactions to authenticated;
 grant execute on function public.is_admin() to authenticated;
 grant execute on function public.is_household_member(uuid) to authenticated;

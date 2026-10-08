@@ -506,6 +506,8 @@ export default function Home() {
   }
   async function addTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (supabase && sessionEmail && !householdId)
+      return notify("ยังโหลด household ไม่สำเร็จ ตรวจสอบการเชื่อมต่อฐานข้อมูลก่อน");
     const form = new FormData(event.currentTarget);
     const type = form.get("type") as TransactionType;
     const categoryId = form.get("category") as string;
@@ -539,6 +541,8 @@ export default function Home() {
   }
   async function addCategory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (supabase && sessionEmail && !householdId)
+      return notify("ยังโหลด household ไม่สำเร็จ ตรวจสอบการเชื่อมต่อฐานข้อมูลก่อน");
     const form = new FormData(event.currentTarget);
     const name = String(form.get("name") ?? "").trim();
     const type = form.get("type") as TransactionType;
@@ -568,6 +572,8 @@ export default function Home() {
     notify("เพิ่มหมวดหมู่แล้ว");
   }
   async function removeCategory(category: Category) {
+    if (supabase && sessionEmail && !householdId)
+      return notify("ยังโหลด household ไม่สำเร็จ ตรวจสอบการเชื่อมต่อฐานข้อมูลก่อน");
     if (transactions.some((item) => item.categoryId === category.id))
       return notify("ลบไม่ได้: ยังมีรายการใช้หมวดหมู่นี้");
     if (
@@ -595,6 +601,8 @@ export default function Home() {
     notify("ลบหมวดหมู่แล้ว");
   }
   async function deleteTransaction(transaction: Transaction) {
+    if (supabase && sessionEmail && !householdId)
+      return notify("ยังโหลด household ไม่สำเร็จ ตรวจสอบการเชื่อมต่อฐานข้อมูลก่อน");
     if (supabase && householdId && sessionEmail) {
       const { error } = await supabase
         .from("transactions")
@@ -647,7 +655,10 @@ export default function Home() {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ householdId, email: inviteEmail.trim().toLowerCase() }),
     });
-    if (!response.ok) return notify("ส่งคำเชิญไม่สำเร็จ ตรวจสอบการตั้งค่าอีเมลใน Supabase");
+    if (!response.ok) {
+      const result = await response.json().catch(() => null);
+      return notify(result?.error ?? "ส่งคำเชิญไม่สำเร็จ");
+    }
     setModal(null);
     notify("ส่งคำเชิญไปยังอีเมลแล้ว");
   }
