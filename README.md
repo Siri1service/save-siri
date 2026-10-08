@@ -15,9 +15,11 @@ Without Supabase keys, the app runs in demo mode and saves changes in this brows
 
 1. Open the Supabase project named `save-siri1` and copy its Project URL and publishable key from **Project Settings → API Keys**.
 2. Apply `supabase/migrations/202610080001_initial_schema.sql` using the Supabase SQL Editor.
-3. Copy `.env.example` to `.env.local` and set the URL, anon key, and service-role key. The service-role key is used only by the server invitation endpoint; never expose it as a `NEXT_PUBLIC_` variable.
+3. Copy `.env.example` to `.env.local` and set the URL, publishable key, and rotated service-role key. The service-role key is used only by the server invitation endpoint; never expose it as a `NEXT_PUBLIC_` variable.
 4. In **Authentication → URL Configuration**, add the local app URL and deployed Vercel URL to the allowed redirect URLs.
 5. Enable email sign-in in **Authentication → Providers**. Supabase's default email delivery has low rate limits; configure SMTP before inviting many users.
+
+Never put real keys in `.env.example` or commit them. If a service-role key has ever been committed, revoke/rotate it in Supabase immediately; removing it from the current file does not remove it from Git history.
 
 Each new account receives a private household. An invited email joins the inviter's household when the recipient follows the email link or signs in. RLS scopes transactions and categories to household membership. To grant admin access, set `profiles.is_admin = true` for a trusted user from the Supabase SQL Editor; the browser cannot grant this role.
 

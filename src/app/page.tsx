@@ -9,12 +9,14 @@ import {
   ChevronDown,
   CircleHelp,
   CreditCard,
+  Database,
   Download,
   LayoutDashboard,
   LogOut,
   Menu,
   Moon,
   Plus,
+  RefreshCw,
   Settings,
   SlidersHorizontal,
   Sun,
@@ -180,15 +182,31 @@ export default function Home() {
     "all" | TransactionType
   >("all");
 
+  function restoreDemoData(currentDate = new Date()) {
+    let localCategories = initialCategories;
+    let localTransactions = makeInitialTransactions(currentDate);
+    try {
+      const savedCategories = window.localStorage.getItem("save-siri-categories");
+      const savedTransactions = window.localStorage.getItem("save-siri-transactions");
+      if (savedCategories) localCategories = JSON.parse(savedCategories) as Category[];
+      if (savedTransactions) localTransactions = JSON.parse(savedTransactions) as Transaction[];
+    } catch {
+      window.localStorage.removeItem("save-siri-categories");
+      window.localStorage.removeItem("save-siri-transactions");
+    }
+    setCategories(localCategories);
+    setTransactions(localTransactions);
+  }
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("save-siri-theme", theme);
   }, [theme]);
   useEffect(() => {
-    if (!storageReady) return;
+    if (!storageReady || sessionEmail) return;
     window.localStorage.setItem("save-siri-categories", JSON.stringify(categories));
     window.localStorage.setItem("save-siri-transactions", JSON.stringify(transactions));
-  }, [categories, storageReady, transactions]);
+  }, [categories, sessionEmail, storageReady, transactions]);
   useEffect(() => {
     if (!toast) return;
     const timeout = window.setTimeout(() => setToast(""), 3200);
@@ -198,6 +216,11 @@ export default function Home() {
   async function loadAccount(userId: string, email: string) {
     if (!supabase) return;
     setSessionEmail(email);
+    setHouseholdId(null);
+    setCategories([]);
+    setTransactions([]);
+    setIsAdmin(false);
+    setAdminStats(null);
     setDatabaseStatus("checking");
     setDatabaseError("");
     const { error: invitationError } = await supabase.rpc(
@@ -208,7 +231,7 @@ export default function Home() {
       setDatabaseError(invitationError.message);
       return;
     }
-    const [{ data: membership }, { data: profile }] = await Promise.all([
+    const [membershipResult, profileResult] = await Promise.all([
       supabase
         .from("household_members")
         .select("household_id")
@@ -221,7 +244,9 @@ export default function Home() {
         .eq("id", userId)
         .maybeSingle(),
     ]);
-    const accountError = membership?.error ?? profile?.error;
+      const membership = membershipResult.data;
+      const profile = profileResult.data;
+      const accountError = membershipResult.error ?? profileResult.error;
     if (accountError) {
       setDatabaseStatus("error");
       setDatabaseError(accountError.message);
@@ -242,8 +267,7 @@ export default function Home() {
       return;
     }
     setHouseholdId(membership.household_id);
-    const [{ data: cloudCategories }, { data: cloudTransactions }] =
-      await Promise.all([
+    const [categoriesResult, transactionsResult] = await Promise.all([
         supabase
           .from("categories")
           .select("id,name,type,color")
@@ -254,7 +278,9 @@ export default function Home() {
           .eq("household_id", membership.household_id)
           .order("occurred_at", { ascending: false }),
       ]);
-    const dataError = cloudCategories?.error ?? cloudTransactions?.error;
+    const cloudCategories = categoriesResult.data;
+    const cloudTransactions = transactionsResult.data;
+    const dataError = categoriesResult.error ?? transactionsResult.error;
     if (dataError) {
       setDatabaseStatus("error");
       setDatabaseError(dataError.message);
@@ -275,21 +301,38 @@ export default function Home() {
     setDatabaseStatus("connected");
   }
 
+  async function checkDatabase() {
+    if (!supabase) {
+      setDatabaseStatus("not-configured");
+      setDatabaseError(
+        "ตั้งค่า NEXT_PUBLIC_SUPABASE_URL และ publishable key ใน .env.local ก่อน",
+      );
+      return;
+    }
+    setDatabaseStatus("checking");
+    const { error } = await supabase.from("profiles").select("id").limit(0);
+    if (error) {
+      setDatabaseStatus("error");
+      setDatabaseError(
+        `${error.message} หากตาราง profiles ยังไม่มี ให้รัน migration ฉบับล่าสุด`,
+      );
+      return;
+    }
+    setDatabaseStatus("connected");
+    setDatabaseError("");
+  }
+
+  function openAuth(mode: "login" | "signup" = "login") {
+    setAuthMode(mode);
+    setModal("login");
+  }
+
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
     const hydrateTimeout = window.setTimeout(() => {
       const currentDate = new Date();
       setToday(currentDate);
-      setTransactions(makeInitialTransactions(currentDate));
-      try {
-        const savedCategories = window.localStorage.getItem("save-siri-categories");
-        const savedTransactions = window.localStorage.getItem("save-siri-transactions");
-        if (savedCategories) setCategories(JSON.parse(savedCategories) as Category[]);
-        if (savedTransactions) setTransactions(JSON.parse(savedTransactions) as Transaction[]);
-      } catch {
-        window.localStorage.removeItem("save-siri-categories");
-        window.localStorage.removeItem("save-siri-transactions");
-      }
+      restoreDemoData(currentDate);
       setStorageReady(true);
       const savedTheme = window.localStorage.getItem("save-siri-theme");
       if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme);
@@ -300,6 +343,7 @@ export default function Home() {
       void supabase.auth.getSession().then(({ data }) => {
         if (data.session?.user)
           void loadAccount(data.session.user.id, data.session.user.email ?? "");
+        else void checkDatabase();
       });
       const { data: authListener } = supabase.auth.onAuthStateChange(
         (_event, nextSession) => {
@@ -309,7 +353,9 @@ export default function Home() {
             setSessionEmail(null);
             setHouseholdId(null);
             setIsAdmin(false);
-            setDatabaseStatus("checking");
+            setAdminStats(null);
+            restoreDemoData();
+            void checkDatabase();
           }
         },
       );
@@ -669,7 +715,10 @@ export default function Home() {
           </div>
           <button
             className="account-chip"
-            onClick={() => setModal(sessionEmail ? "invite" : "login")}
+            onClick={() => {
+              if (sessionEmail) setModal("invite");
+              else openAuth("login");
+            }}
           >
             <span className="avatar">
               {sessionEmail ? sessionEmail.slice(0, 1).toUpperCase() : "S"}
@@ -1307,6 +1356,36 @@ export default function Home() {
                     เชิญสมาชิก
                   </button>
                 </section>
+                <section className="panel setting-row database-setting">
+                  <span className="setting-icon">
+                    <Database size={19} />
+                  </span>
+                  <div className="setting-copy">
+                    <strong>ฐานข้อมูล Supabase</strong>
+                    <span>
+                      {databaseStatus === "connected"
+                        ? sessionEmail
+                          ? "เชื่อมต่อและอ่านข้อมูล household แล้ว"
+                          : "ฐานข้อมูลตอบสนองแล้ว เข้าสู่ระบบเพื่ออ่านข้อมูลส่วนตัว"
+                        : databaseStatus === "checking"
+                          ? "กำลังตรวจสอบการเชื่อมต่อ..."
+                          : databaseStatus === "not-configured"
+                            ? "ยังไม่ได้ตั้งค่า Supabase URL และ publishable key"
+                            : "เชื่อมต่อไม่สำเร็จ ตรวจสอบรายละเอียดด้านล่าง"}
+                    </span>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    onClick={() => void checkDatabase()}
+                    disabled={databaseStatus === "checking"}
+                  >
+                    <RefreshCw size={15} />
+                    ตรวจสอบ
+                  </button>
+                  {databaseError && (
+                    <p className="database-error">{databaseError}</p>
+                  )}
+                </section>
                 <section className="panel setting-row">
                   <span className="setting-icon">
                     <Wallet size={19} />
@@ -1331,7 +1410,7 @@ export default function Home() {
                   ) : (
                     <button
                       className="secondary-button"
-                      onClick={() => setModal("login")}
+                      onClick={() => openAuth("login")}
                     >
                       เข้าสู่ระบบ
                     </button>
@@ -1420,7 +1499,7 @@ export default function Home() {
                   {!sessionEmail && (
                     <button
                       className="primary-button"
-                      onClick={() => setModal("login")}
+                      onClick={() => openAuth("login")}
                     >
                       เข้าสู่ระบบ
                     </button>
@@ -1466,7 +1545,9 @@ export default function Home() {
                       ? "ORGANIZE"
                       : modal === "invite"
                         ? "SHARED WORKSPACE"
-                        : "SECURE SIGN IN"}
+                        : authMode === "signup"
+                          ? "CREATE ACCOUNT"
+                          : "SECURE SIGN IN"}
                 </p>
                 <h2 id="modal-title">
                   {modal === "transaction"
@@ -1475,7 +1556,9 @@ export default function Home() {
                       ? "เพิ่มหมวดหมู่"
                       : modal === "invite"
                         ? "เชิญสมาชิก"
-                        : "เข้าสู่ระบบ"}
+                        : authMode === "signup"
+                          ? "สมัครใช้งาน"
+                          : "เข้าสู่ระบบ"}
                 </h2>
               </div>
               <button
@@ -1594,9 +1677,26 @@ export default function Home() {
             )}
             {modal === "login" && (
               <form className="form-grid" onSubmit={sendMagicLink}>
+                <div className="auth-switch" role="group" aria-label="ประเภทบัญชี">
+                  <button
+                    type="button"
+                    className={authMode === "login" ? "chosen" : ""}
+                    onClick={() => setAuthMode("login")}
+                  >
+                    เข้าสู่ระบบ
+                  </button>
+                  <button
+                    type="button"
+                    className={authMode === "signup" ? "chosen" : ""}
+                    onClick={() => setAuthMode("signup")}
+                  >
+                    สมัครใช้งาน
+                  </button>
+                </div>
                 <p className="modal-description">
-                  เราจะส่งลิงก์เข้าสู่ระบบแบบใช้ครั้งเดียวไปยังอีเมลของคุณ
-                  ไม่ต้องจำรหัสผ่าน
+                  {authMode === "signup"
+                    ? "กรอกอีเมลเพื่อสร้างบัญชี เราจะส่งลิงก์ยืนยันให้โดยไม่ต้องตั้งรหัสผ่าน"
+                    : "กรอกอีเมลที่ลงทะเบียนไว้ เราจะส่งลิงก์เข้าสู่ระบบให้โดยไม่ต้องใช้รหัสผ่าน"}
                 </p>
                 <label>
                   อีเมล
@@ -1619,7 +1719,9 @@ export default function Home() {
                     ยกเลิก
                   </button>
                   <button className="primary-button" type="submit">
-                    ส่งลิงก์เข้าสู่ระบบ
+                    {authMode === "signup"
+                      ? "ส่งลิงก์สมัครใช้งาน"
+                      : "ส่งลิงก์เข้าสู่ระบบ"}
                   </button>
                 </div>
               </form>
